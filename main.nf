@@ -16,8 +16,9 @@ process mk_directories {
   """
   mkdir -p $params.outdir_fastq &&
   mkdir -p $params.outdir_trim &&
-  mkdir -p $params.outdir_align
-  
+  mkdir -p $params.outdir_align &&
+  mkdir -p $params.outdir_peak &&
+  mkdir -p $params.singularity_folder 
   """
 
 }
@@ -69,7 +70,7 @@ process fastqc {
   queue = "$params.queue"
   container ='https://depot.galaxyproject.org/singularity/fastqc:0.11.9--0'
 
-  tag "fastqc" 
+  tag "fastqc t" 
   publishDir params.outdir_fastq, mode : 'copy'
   
   input:
@@ -86,10 +87,10 @@ process fastqc {
 process align {
   //errorStrategy 'ignore'
   queue = "$params.queue"
-  //container ='https://depot.galaxyproject.org/singularity/mulled-v2-fe8faa35dbf6dc65a0f7f5d4ea12e31a79f73e40:8110a70be2bfe7f75a2ea7f2a89cda4cc7732095-0'
-  container = 'quay.io/biocontainers/mulled-v2-fe8faa35dbf6dc65a0f7f5d4ea12e31a79f73e40:8110a70be2bfe7f75a2ea7f2a89cda4cc7732095-0'
-  tag "bwa mem 76665" 
-  //publishDir params.outdir_align, mode : 'copy'
+  container ='https://depot.galaxyproject.org/singularity/mulled-v2-fe8faa35dbf6dc65a0f7f5d4ea12e31a79f73e40:8110a70be2bfe7f75a2ea7f2a89cda4cc7732095-0'
+
+  tag "bwa mem" 
+  publishDir params.outdir_align, mode : 'copy'
   
   input:
   path file1
@@ -97,13 +98,74 @@ process align {
   path fileAlign
   val _
 
-  output:
-  path "test.bam"
-
-  //bwa mem $fileAlign $file1 $file2 | samtools view -Sb - > test.bam
   script:
   """
-  bwa mem $fileAlign $file1 $file2
+  bwa mem $params.align_ref/hg19.fa $file1 $file2 | samtools view -Sb - > $params.outdir_align/test7.bam
+  """
+}
+
+process sort {
+  //errorStrategy 'ignore'
+  queue = "$params.queue"
+  container ='https://depot.galaxyproject.org/singularity/samtools:1.15.1--h1170115_0'
+
+  tag "sort samtools" 
+  publishDir params.outdir_align, mode : 'copy'
+  
+  input:
+  path fileAlign
+  val _
+
+  script:
+  """
+  samtools sort $params.outdir_align/test7.bam -o $params.outdir_align/test7.sorted.bam
+  """
+}
+
+
+process dedup {
+  queue = "$params.queue"
+  container = 'https://depot.galaxyproject.org/singularity/picard:2.27.4--hdfd78af_0'
+
+  tag "dedup metric 9test" 
+  publishDir params.outdir_align, mode : 'copy'
+
+  input:
+  path fileAlign
+  val _
+  // ASSUME_SORTED=true \\
+  script:
+  """
+  picard MarkDuplicates \\
+  I=$params.outdir_align/test7.sorted.bam \\
+  O=$params.outdir_align/test7.dedup.bam \\
+  REMOVE_DUPLICATES=true \\
+  ASSUME_SORT_ORDER=coordinate \\
+  VALIDATION_STRINGENCY=LENIENT \\
+  METRICS_FILE=$params.outdir_align/MarkDuplicates.metrics.txt
+	"""
+}
+
+process peak_calling{
+
+  queue = "$params.queue"
+  container = 'https://depot.galaxyproject.org/singularity/macs2:2.2.7.1--py38h4a8c8d9_3'
+
+  tag "peak calling" 
+  publishDir params.outdir_align, mode : 'copy'
+
+
+  input:
+  path fileAlign
+  val _
+  
+  script:
+  """
+  macs2 \\
+  callpeak --SPMR -B -q 0.01 --keep-dup 1 -g hs -f BAMPE --extsize 146 --nomodel \\
+  -t $params.outdir_align/test7.bam \\
+  --outdir $params.outdir_peak \\
+  -n test7
   """
 }
 
@@ -112,8 +174,10 @@ workflow {
     def rawFiles = Channel.fromPath( "$params.fastq/*" )
     def file1 = rawFiles.first()
     def file2 = rawFiles.last()
-    def alignPath = Channel.fromPath("$params.align_ref/*")
-    def fileAlign = alignPath.first()
+
+    // this is apperantly not been used by the process but if is not passed the process doesn't read the files pointed
+    def alignPath = Channel.fromPath("/data/baca/users/bjf35/cfchip_pipeline/ref_files/hg19/bwa_indices/hg19/hg19.fa.sa")
+
     
     //this channels is only created in order to make sure that the directories will be
     //created before the first process starts otherwise it will break the workflow
@@ -121,9 +185,10 @@ workflow {
     ch2 = load_modules(ch1)
     fastqc(rawFiles,ch2)
     trim(file1, file2,ch2)
-    align(file1,file2,fileAlign,ch2)
-
-
+    align(file1,file2,alignPath,ch2)
+    sort(alignPath,ch2)
+    dedup(alignPath,ch2)
+    peak_calling(alignPath,ch2)
 
 }
 
