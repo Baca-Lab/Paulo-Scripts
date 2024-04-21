@@ -1,4 +1,4 @@
-## original---Nuctools Vainshtein, Y., Rippe, K. & Teif, V.B. BMC Genomics (2017) 18: 158. doi:10.1186/s12864-017-3580-2
+## original---Human SMARCA5 is continuously required to maintain nucleosome spacing DOI: 10.1016/j.molcel.2022.12.018
 ## modified code from the original--- Author: Paulo Cordeiro (paulocordeiro@gmail.com), April 8, 2024
 
 # Suppress warning messages
